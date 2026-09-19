@@ -40,6 +40,19 @@ export interface InputSnapshot {
   safety_boundary: string
 }
 
+export interface RiskConfirmation {
+  risk_code: string
+  risk_band: RiskBand
+}
+
+export interface RiskAcknowledgment {
+  risk_code: string
+  risk_band: RiskBand
+  ack_by: number
+  ack_username: string
+  ack_at: string
+}
+
 export interface DecompressionAssessment {
   id: number
   plan_id: number
@@ -53,6 +66,8 @@ export interface DecompressionAssessment {
   assumptions: ModelAssumptions
   created_at: string
   reviewed_at?: string
+  risk_acks: RiskAcknowledgment[]
+  unconfirmed_count: number
   safety_disclaimer: string
 }
 

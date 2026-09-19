@@ -96,7 +96,7 @@ func (h *DecompressionAssessmentHandler) Approve(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req dto.TransitionPlanRequest
+	var req dto.ApproveAssessmentRequest
 	if !util.BindJSON(c, &req) {
 		return
 	}

@@ -22,3 +22,18 @@ type DecompressionAssessment struct {
 }
 
 func (DecompressionAssessment) TableName() string { return "decompression_assessments" }
+
+// RiskAcknowledgment is the immutable per-flag evidence a supervisor records
+// in the same transaction that approves an assessment. One row exists for each
+// caution, elevated, or invalid risk flag present in the assessment snapshot.
+type RiskAcknowledgment struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	AssessmentID uint      `gorm:"not null;uniqueIndex:idx_risk_ack_assessment_code,priority:1;index" json:"assessment_id"`
+	RiskCode     string    `gorm:"size:80;not null;uniqueIndex:idx_risk_ack_assessment_code,priority:2" json:"risk_code"`
+	RiskBand     string    `gorm:"size:20;not null" json:"risk_band"`
+	AckBy        uint      `gorm:"not null;index" json:"ack_by"`
+	AckUsername  string    `gorm:"size:64;not null" json:"ack_username"`
+	AckAt        time.Time `gorm:"not null;index" json:"ack_at"`
+}
+
+func (RiskAcknowledgment) TableName() string { return "risk_acknowledgments" }

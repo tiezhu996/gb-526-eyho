@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { approveAssessment, compareAssessments, getAssessment, listAssessments, runAssessment, submitAssessment } from '@/api/assessment'
 import { errorMessage } from '@/api/client'
-import type { AssessmentComparison, DecompressionAssessment } from '@/types/assessment'
+import type { AssessmentComparison, DecompressionAssessment, RiskConfirmation } from '@/types/assessment'
 
 interface AssessmentStore {
   items: DecompressionAssessment[]
@@ -13,7 +13,7 @@ interface AssessmentStore {
   select: (id: number) => Promise<void>
   run: (planId: number, version: number) => Promise<DecompressionAssessment>
   submit: (id: number, version: number, reason: string) => Promise<void>
-  approve: (id: number, version: number, reason: string) => Promise<void>
+  approve: (id: number, version: number, reason: string, confirmations: RiskConfirmation[]) => Promise<void>
   compare: (leftId: number, rightId: number) => Promise<void>
 }
 
@@ -42,8 +42,8 @@ export const useAssessmentStore = create<AssessmentStore>((set, get) => ({
     const item = await submitAssessment(id, version, reason)
     set((state) => ({ items: state.items.map((current) => current.id === id ? item : current), selected: item }))
   },
-  approve: async (id, version, reason) => {
-    const item = await approveAssessment(id, version, reason)
+  approve: async (id, version, reason, confirmations) => {
+    const item = await approveAssessment(id, version, reason, confirmations)
     set((state) => ({ items: state.items.map((current) => current.id === id ? item : current), selected: item }))
   },
   compare: async (leftId, rightId) => {

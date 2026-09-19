@@ -68,7 +68,7 @@ func backfillRiskBands(db *gorm.DB) error {
 }
 
 func migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&auth.User{}, &model.DiverProfile{}, &model.DivePlan{}, &model.ExposureSegment{}, &model.DecompressionAssessment{}, &audit.Event{}); err != nil {
+	if err := db.AutoMigrate(&auth.User{}, &model.DiverProfile{}, &model.DivePlan{}, &model.ExposureSegment{}, &model.DecompressionAssessment{}, &model.RiskAcknowledgment{}, &audit.Event{}); err != nil {
 		return fmt.Errorf("auto migrate database: %w", err)
 	}
 	return nil

@@ -204,6 +204,12 @@ button, input, select, textarea { font: inherit; }
 .risk-informational { color: #31536a; background: #edf3f6; border-color: #c6d8e1; }
 .risk-caution { color: #714e18; background: #faf4e6; border-color: #dfc994; }
 .risk-elevated, .risk-invalid { color: #763b35; background: #faeeec; border-color: #deb6b1; }
+.risk-row .MuiCheckbox-root { padding: 0; align-self: start; margin-top: 2px; }
+.ack-counter { margin-left: auto; margin-right: 6px; padding: 2px 7px; border-radius: 10px; background: #f3e2cf; color: #714e18 !important; font-size: 9px !important; }
+.ack-counter.ack-complete { background: #dfece2; color: #2f5d40 !important; }
+.ack-stamp { display: flex; align-items: center; gap: 4px; margin-top: 4px; color: #2f5d40; }
+.ack-stamp svg { flex: none; }
+.ack-stamp span { text-transform: none; letter-spacing: 0; font-weight: 700; font-size: 9px; color: #2f5d40; }
 .compartment-grid { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 18px 18px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .compartment-grid > div { min-height: 77px; display: flex; flex-direction: column; padding: 11px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .compartment-grid span { color: var(--green); font-size: 9px; font-weight: 900; }

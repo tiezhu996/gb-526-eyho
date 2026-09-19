@@ -32,6 +32,16 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s database: %w", cfg.DBDriver, err)
 	}
+	if cfg.DBDriver == "sqlite" {
+		// SQLite permits a single writer; one connection serializes
+		// transactions so concurrent writes resolve through optimistic-lock
+		// conflicts instead of "database table is locked" errors.
+		sqlDB, err := db.DB()
+		if err != nil {
+			return nil, fmt.Errorf("get sqlite database handle: %w", err)
+		}
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if cfg.DBAutoMigrate {
 		if err := migrate(db); err != nil {
 			return nil, err
@@ -68,7 +78,7 @@ func backfillRiskBands(db *gorm.DB) error {
 }
 
 func migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&auth.User{}, &model.DiverProfile{}, &model.DivePlan{}, &model.ExposureSegment{}, &model.DecompressionAssessment{}, &audit.Event{}); err != nil {
+	if err := db.AutoMigrate(&auth.User{}, &model.DiverProfile{}, &model.DivePlan{}, &model.ExposureSegment{}, &model.DecompressionAssessment{}, &model.AssessmentRiskConfirmation{}, &audit.Event{}); err != nil {
 		return fmt.Errorf("auto migrate database: %w", err)
 	}
 	return nil

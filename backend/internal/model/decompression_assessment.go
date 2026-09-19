@@ -22,3 +22,19 @@ type DecompressionAssessment struct {
 }
 
 func (DecompressionAssessment) TableName() string { return "decompression_assessments" }
+
+// AssessmentRiskConfirmation records one supervisor confirmation of a snapshot
+// risk flag. Rows are inserted in the same transaction as the approval
+// transition and are never updated or deleted by ordinary flows; the unique
+// index makes repeated or concurrent confirmations take effect at most once.
+type AssessmentRiskConfirmation struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	AssessmentID    uint      `gorm:"not null;uniqueIndex:ux_risk_confirmation_assessment_flag" json:"assessment_id"`
+	FlagCode        string    `gorm:"size:64;not null;uniqueIndex:ux_risk_confirmation_assessment_flag" json:"flag_code"`
+	Band            string    `gorm:"size:20;not null" json:"band"`
+	ConfirmedBy     uint      `gorm:"not null;index" json:"confirmed_by"`
+	ConfirmedByName string    `gorm:"size:64;not null" json:"confirmed_by_name"`
+	ConfirmedAt     time.Time `gorm:"not null" json:"confirmed_at"`
+}
+
+func (AssessmentRiskConfirmation) TableName() string { return "assessment_risk_confirmations" }

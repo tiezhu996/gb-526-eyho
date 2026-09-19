@@ -64,8 +64,8 @@ docker compose down -v --remove-orphans
 
 `RiskBand = informational | caution | elevated | invalid`
 
-- 数据库：评估表的 `risk_flags_json` 保存完整不可覆盖证据，`highest_risk_band` 使用显式 `CHECK` 约束。
-- 后端：`backend/internal/constants/risk.go`、`decompression/risk.go`、`dto/decompression_assessment.go`。
+- 数据库：评估表的 `risk_flags_json` 保存完整不可覆盖证据，`highest_risk_band` 使用显式 `CHECK` 约束；逐项确认持久化在 `assessment_risk_confirmations`。
+- 后端：`backend/internal/constants/risk.go`、`decompression/risk.go`、`model/decompression_assessment.go`、`dto/decompression_assessment.go`。
 - 前端：`frontend/src/types/risk.ts`、`types/assessment.ts`、`stores/assessment.ts`、`pages/AssessmentsPage.tsx`。
 
 状态流转固定为：
@@ -76,6 +76,15 @@ draft -> modeled -> pending_supervisor_review -> approved_for_training -> archiv
 ```
 
 模型输入失败不创建评估，并保持或恢复 `draft`；主管批准在单一事务中使用状态和版本条件更新，同时写审计理由。
+
+### 主管逐项风险确认
+
+评估进入 `pending_supervisor_review` 后，主管批准前必须逐项确认快照中的全部 `caution`、`elevated`、`invalid` 风险标记（`informational` 无需确认）：
+
+- 批准请求必须携带 `confirmed_flags`，其集合与快照必需确认集合**完全一致**——多一个、少一个、重复或未知编码都会以 `RISK_CONFIRMATION_MISMATCH` 拒绝，且不产生任何写入。
+- 确认记录（`assessment_risk_confirmations`，按 `(assessment_id, flag_code)` 唯一）与计划/评估状态迁移、审计事件在**同一事务**提交；任一环节失败全部回滚，计划状态、确认记录与审计保持不变。
+- 重复或并发批准只生效一次：相同确认集合的重放幂等返回当前状态，不同集合以 `RISK_CONFIRMATION_CONFLICT` 拒绝，并发请求由乐观锁条件更新兜底。
+- 评估响应的 `risk_review` 持久返回确认人、确认时间、未确认数量（`pending_count`）和逐项确认状态，批准后刷新页面仍可回读。
 
 ## API
 
@@ -91,10 +100,10 @@ draft -> modeled -> pending_supervisor_review -> approved_for_training -> archiv
 | `GET` | `/api/v1/assessments`、`/assessments/:id` | 结果列表与重放数据 |
 | `GET` | `/api/v1/assessments/:id/compare?other_id=` | 比较两个不可覆盖结果 |
 | `POST` | `/api/v1/assessments/:id/submit` | 计划员提交主管复核 |
-| `POST` | `/api/v1/assessments/:id/approve` | 主管人工批准训练用途 |
+| `POST` | `/api/v1/assessments/:id/approve` | 主管逐项确认快照风险后人工批准训练用途 |
 | `GET` | `/api/v1/audit-events` | 主管/管理员读取不可删除审计轨迹 |
 
-统一响应包含 `data` 或 `error` 及 `request_id`。主要错误码包括 `INVALID_GAS_MIX`、`SEGMENT_SEQUENCE_CONFLICT`、`MODEL_INPUT_INVALID`、`PLAN_VERSION_CONFLICT`、`INVALID_PLAN_TRANSITION`、`AUTH_REQUIRED` 和 `FORBIDDEN`。
+统一响应包含 `data` 或 `error` 及 `request_id`。主要错误码包括 `INVALID_GAS_MIX`、`SEGMENT_SEQUENCE_CONFLICT`、`MODEL_INPUT_INVALID`、`PLAN_VERSION_CONFLICT`、`INVALID_PLAN_TRANSITION`、`RISK_CONFIRMATION_MISMATCH`、`RISK_CONFIRMATION_CONFLICT`、`AUTH_REQUIRED` 和 `FORBIDDEN`。
 
 ## 技术栈与目录
 

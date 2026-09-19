@@ -17,3 +17,14 @@ func ValidRiskBand(band RiskBand) bool {
 		return false
 	}
 }
+
+// ConfirmationRequired reports whether a supervisor must explicitly confirm a
+// snapshot risk flag of this band before the assessment can be approved.
+func ConfirmationRequired(band RiskBand) bool {
+	switch band {
+	case RiskCaution, RiskElevated, RiskInvalid:
+		return true
+	default:
+		return false
+	}
+}

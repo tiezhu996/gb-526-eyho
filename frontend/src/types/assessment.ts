@@ -40,6 +40,23 @@ export interface InputSnapshot {
   safety_boundary: string
 }
 
+export interface RiskReviewItem {
+  code: string
+  band: RiskBand
+  required: boolean
+  confirmed: boolean
+  confirmed_by?: string
+  confirmed_at?: string
+}
+
+export interface RiskReview {
+  items: RiskReviewItem[]
+  required_count: number
+  pending_count: number
+  confirmed_by?: string
+  confirmed_at?: string
+}
+
 export interface DecompressionAssessment {
   id: number
   plan_id: number
@@ -51,6 +68,7 @@ export interface DecompressionAssessment {
   highest_risk_band: RiskBand
   comparative_score: number
   assumptions: ModelAssumptions
+  risk_review: RiskReview
   created_at: string
   reviewed_at?: string
   safety_disclaimer: string

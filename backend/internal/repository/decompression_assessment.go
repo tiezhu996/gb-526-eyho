@@ -40,6 +40,25 @@ func (r *DecompressionAssessmentRepository) List(ctx context.Context, planID uin
 	return items, total, nil
 }
 
+func (r *DecompressionAssessmentRepository) ListConfirmations(ctx context.Context, assessmentID uint) ([]model.AssessmentRiskConfirmation, error) {
+	var items []model.AssessmentRiskConfirmation
+	if err := r.db.WithContext(ctx).Where("assessment_id = ?", assessmentID).Order("flag_code").Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list risk confirmations for assessment %d: %w", assessmentID, err)
+	}
+	return items, nil
+}
+
+func (r *DecompressionAssessmentRepository) ListConfirmationsByAssessments(ctx context.Context, assessmentIDs []uint) ([]model.AssessmentRiskConfirmation, error) {
+	if len(assessmentIDs) == 0 {
+		return nil, nil
+	}
+	var items []model.AssessmentRiskConfirmation
+	if err := r.db.WithContext(ctx).Where("assessment_id IN ?", assessmentIDs).Order("assessment_id, flag_code").Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list risk confirmations: %w", err)
+	}
+	return items, nil
+}
+
 func (r *DecompressionAssessmentRepository) Get(ctx context.Context, id uint) (model.DecompressionAssessment, error) {
 	var item model.DecompressionAssessment
 	if err := r.db.WithContext(ctx).First(&item, id).Error; err != nil {
@@ -82,6 +101,50 @@ func (r *DecompressionAssessmentRepository) CreateModeled(ctx context.Context, p
 	})
 	if err != nil {
 		return fmt.Errorf("create modeled assessment transaction: %w", err)
+	}
+	return nil
+}
+
+// ApproveWithConfirmations persists the supervisor risk confirmations, the
+// plan/assessment approval transition, and the audit events in one
+// transaction. Optimistic-lock predicates make concurrent approvals take
+// effect at most once, and any failure rolls back confirmations, plan state,
+// and audit together.
+func (r *DecompressionAssessmentRepository) ApproveWithConfirmations(ctx context.Context, plan model.DivePlan, assessment model.DecompressionAssessment, confirmations []model.AssessmentRiskConfirmation, actorID uint, entry audit.Entry) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		for index := range confirmations {
+			confirmations[index].ConfirmedAt = now
+			if err := tx.Create(&confirmations[index]).Error; err != nil {
+				return fmt.Errorf("record risk confirmation %s: %w", confirmations[index].FlagCode, err)
+			}
+		}
+		planResult := tx.Model(&model.DivePlan{}).Where("id = ? AND version = ? AND plan_status = ?", plan.ID, plan.Version, plan.PlanStatus).Updates(map[string]any{"plan_status": constants.PlanApprovedTraining, "version": gorm.Expr("version + 1"), "reviewed_by": actorID})
+		if planResult.Error != nil {
+			return fmt.Errorf("approve assessment plan: %w", planResult.Error)
+		}
+		if planResult.RowsAffected != 1 {
+			return util.Conflict("PLAN_VERSION_CONFLICT", "plan state or version changed concurrently", nil)
+		}
+		assessmentResult := tx.Model(&model.DecompressionAssessment{}).Where("id = ? AND assessment_status = ?", assessment.ID, assessment.AssessmentStatus).Updates(map[string]any{"assessment_status": string(constants.PlanApprovedTraining), "reviewed_at": now})
+		if assessmentResult.Error != nil {
+			return fmt.Errorf("approve assessment metadata: %w", assessmentResult.Error)
+		}
+		if assessmentResult.RowsAffected != 1 {
+			return util.Conflict("ASSESSMENT_STATE_CONFLICT", "assessment review state changed concurrently", nil)
+		}
+		entry.EntityID = assessment.ID
+		if err := r.audit.RecordWithDB(ctx, tx, entry); err != nil {
+			return err
+		}
+		planEntry := entry
+		planEntry.EntityType = "dive_plan"
+		planEntry.EntityID = plan.ID
+		planEntry.Action = "dive_plan.transition"
+		return r.audit.RecordWithDB(ctx, tx, planEntry)
+	})
+	if err != nil {
+		return fmt.Errorf("approve assessment transaction: %w", err)
 	}
 	return nil
 }

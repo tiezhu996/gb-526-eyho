@@ -38,9 +38,10 @@ type DivePlanResponse struct {
 }
 
 type TransitionPlanRequest struct {
-	TargetStatus constants.PlanStatus `json:"target_status" binding:"required"`
-	Version      uint                 `json:"version" binding:"required,min=1"`
-	Reason       string               `json:"reason" binding:"required,min=3,max=300"`
+	TargetStatus   constants.PlanStatus `json:"target_status" binding:"required"`
+	Version        uint                 `json:"version" binding:"required,min=1"`
+	Reason         string               `json:"reason" binding:"required,min=3,max=300"`
+	ConfirmedFlags []string             `json:"confirmed_flags" binding:"omitempty,max=64"`
 }
 
 func (r CreateDivePlanRequest) ValidateBusiness() error {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"commercial-diving-decompression-control/backend/internal/constants"
 	"commercial-diving-decompression-control/backend/internal/model"
@@ -145,4 +146,47 @@ func HighestRiskBand(flags []RiskFlag) constants.RiskBand {
 		}
 	}
 	return highest
+}
+
+// RequiredConfirmations returns the sorted snapshot flag codes a supervisor
+// must confirm before approval: every caution, elevated, and invalid flag.
+func RequiredConfirmations(flags []RiskFlag) []string {
+	required := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		if constants.ConfirmationRequired(flag.Band) {
+			required = append(required, flag.Code)
+		}
+	}
+	sort.Strings(required)
+	return required
+}
+
+// ValidateConfirmationSet requires the submitted confirmation codes to match
+// the required snapshot set exactly: one extra, one missing, duplicated, or
+// unknown code rejects the whole review before any state change.
+func ValidateConfirmationSet(required []string, submitted []string) error {
+	requiredSet := make(map[string]bool, len(required))
+	for _, code := range required {
+		requiredSet[code] = true
+	}
+	seen := make(map[string]bool, len(submitted))
+	matched := 0
+	for _, code := range submitted {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return fmt.Errorf("confirmation codes must be non-empty snapshot flag codes")
+		}
+		if seen[code] {
+			return fmt.Errorf("risk flag %s was confirmed more than once", code)
+		}
+		seen[code] = true
+		if !requiredSet[code] {
+			return fmt.Errorf("confirmation %s is not a required snapshot risk flag", code)
+		}
+		matched++
+	}
+	if matched != len(required) {
+		return fmt.Errorf("exactly %d snapshot risk confirmations are required, got %d", len(required), matched)
+	}
+	return nil
 }

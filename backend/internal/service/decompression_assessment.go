@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"commercial-diving-decompression-control/backend/internal/audit"
@@ -32,9 +34,21 @@ func (s *DecompressionAssessmentService) List(ctx context.Context, planID uint, 
 	if err != nil {
 		return nil, 0, err
 	}
+	ids := make([]uint, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	confirmations, err := s.assessments.ListConfirmationsByAssessments(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	byAssessment := make(map[uint][]model.AssessmentRiskConfirmation, len(items))
+	for _, confirmation := range confirmations {
+		byAssessment[confirmation.AssessmentID] = append(byAssessment[confirmation.AssessmentID], confirmation)
+	}
 	responses := make([]dto.AssessmentResponse, 0, len(items))
 	for _, item := range items {
-		response, decodeErr := dto.DecodeAssessment(item)
+		response, decodeErr := dto.DecodeAssessmentWithReview(item, byAssessment[item.ID])
 		if decodeErr != nil {
 			return nil, 0, decodeErr
 		}
@@ -48,7 +62,11 @@ func (s *DecompressionAssessmentService) Get(ctx context.Context, id uint) (dto.
 	if err != nil {
 		return dto.AssessmentResponse{}, err
 	}
-	return dto.DecodeAssessment(item)
+	confirmations, err := s.assessments.ListConfirmations(ctx, id)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	return dto.DecodeAssessmentWithReview(item, confirmations)
 }
 
 func (s *DecompressionAssessmentService) Run(ctx context.Context, planID uint, req dto.RunAssessmentRequest, actor audit.Entry) (dto.AssessmentResponse, error) {
@@ -95,8 +113,78 @@ func (s *DecompressionAssessmentService) Submit(ctx context.Context, id uint, re
 	return s.transition(ctx, id, req, constants.PlanPendingReview, actor)
 }
 
+// Approve requires the supervisor to confirm every caution, elevated, and
+// invalid snapshot risk flag. The submitted set must match the snapshot
+// exactly — one extra or one missing code rejects the review before any
+// write. Confirmations, the state transition, and audit are committed in a
+// single transaction, so a failed approval changes nothing.
 func (s *DecompressionAssessmentService) Approve(ctx context.Context, id uint, req dto.TransitionPlanRequest, actor audit.Entry) (dto.AssessmentResponse, error) {
-	return s.transition(ctx, id, req, constants.PlanApprovedTraining, actor)
+	if req.TargetStatus != constants.PlanApprovedTraining {
+		return dto.AssessmentResponse{}, util.Unprocessable("INVALID_PLAN_TRANSITION", fmt.Sprintf("endpoint requires target_status %s", constants.PlanApprovedTraining), nil)
+	}
+	assessment, err := s.assessments.Get(ctx, id)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	plan, err := s.plans.Get(ctx, assessment.PlanID)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	if plan.PlanStatus == constants.PlanApprovedTraining && assessment.AssessmentStatus == string(constants.PlanApprovedTraining) {
+		return s.replayApproval(ctx, assessment, req)
+	}
+	if plan.Version != req.Version {
+		return dto.AssessmentResponse{}, util.Conflict("PLAN_VERSION_CONFLICT", "dive plan was changed by another user", nil)
+	}
+	if !constants.CanTransitionPlan(plan.PlanStatus, constants.PlanApprovedTraining) {
+		return dto.AssessmentResponse{}, util.Unprocessable("INVALID_PLAN_TRANSITION", fmt.Sprintf("cannot transition from %s to %s", plan.PlanStatus, constants.PlanApprovedTraining), nil)
+	}
+	if assessment.AssessmentStatus != string(plan.PlanStatus) {
+		return dto.AssessmentResponse{}, util.Conflict("ASSESSMENT_STATE_CONFLICT", "assessment and plan review states do not match", nil)
+	}
+	var flags []decompression.RiskFlag
+	if err := json.Unmarshal([]byte(assessment.RiskFlagsJSON), &flags); err != nil {
+		return dto.AssessmentResponse{}, util.Internal(fmt.Errorf("decode assessment %d risk flags: %w", assessment.ID, err))
+	}
+	required := decompression.RequiredConfirmations(flags)
+	if err := decompression.ValidateConfirmationSet(required, req.ConfirmedFlags); err != nil {
+		return dto.AssessmentResponse{}, util.Unprocessable("RISK_CONFIRMATION_MISMATCH", err.Error(), nil)
+	}
+	bandByCode := make(map[string]constants.RiskBand, len(flags))
+	for _, flag := range flags {
+		bandByCode[flag.Code] = flag.Band
+	}
+	confirmations := make([]model.AssessmentRiskConfirmation, 0, len(required))
+	for _, code := range required {
+		confirmations = append(confirmations, model.AssessmentRiskConfirmation{AssessmentID: assessment.ID, FlagCode: code, Band: string(bandByCode[code]), ConfirmedBy: actor.ActorID, ConfirmedByName: actor.ActorUsername})
+	}
+	actor.Action = "decompression_assessment.approve_training"
+	actor.EntityType = "decompression_assessment"
+	actor.BeforeSummary = string(plan.PlanStatus)
+	actor.AfterSummary = fmt.Sprintf("%s reason=%s human_review=true confirmed_flags=%d", constants.PlanApprovedTraining, strings.TrimSpace(req.Reason), len(confirmations))
+	if err := s.assessments.ApproveWithConfirmations(ctx, plan, assessment, confirmations, actor.ActorID, actor); err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+// replayApproval makes a repeated approval idempotent: the same confirmation
+// set returns the persisted review state without new writes, while a
+// different set is rejected so an approval takes effect exactly once.
+func (s *DecompressionAssessmentService) replayApproval(ctx context.Context, assessment model.DecompressionAssessment, req dto.TransitionPlanRequest) (dto.AssessmentResponse, error) {
+	confirmations, err := s.assessments.ListConfirmations(ctx, assessment.ID)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	recorded := make([]string, 0, len(confirmations))
+	for _, confirmation := range confirmations {
+		recorded = append(recorded, confirmation.FlagCode)
+	}
+	sort.Strings(recorded)
+	if err := decompression.ValidateConfirmationSet(recorded, req.ConfirmedFlags); err != nil {
+		return dto.AssessmentResponse{}, util.Conflict("RISK_CONFIRMATION_CONFLICT", "assessment was already approved with a different confirmation set", nil)
+	}
+	return s.Get(ctx, assessment.ID)
 }
 
 func (s *DecompressionAssessmentService) transition(ctx context.Context, id uint, req dto.TransitionPlanRequest, target constants.PlanStatus, actor audit.Entry) (dto.AssessmentResponse, error) {
